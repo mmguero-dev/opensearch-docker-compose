@@ -1,0 +1,75 @@
+# OpenSearch Node 2 Configuration with SSL/TLS
+#
+# This configuration enables security with custom certificates generated
+# by the opensearch-setup container.
+
+cluster.name: ${OPENSEARCH_CLUSTER_NAME}
+node.name: opensearch-node2
+
+# Network settings
+network.host: 0.0.0.0
+http.port: 9200
+transport.port: 9300
+
+# Discovery settings
+discovery.seed_hosts:
+  - opensearch-node1
+  - opensearch-node2
+
+cluster.initial_cluster_manager_nodes:
+  - opensearch-node1
+  - opensearch-node2
+
+# Disable demo configuration
+plugins.security.disabled: false
+
+# TLS/SSL Configuration for REST API (HTTPS)
+plugins.security.ssl.http.enabled: true
+plugins.security.ssl.http.pemcert_filepath: certs/node2.pem
+plugins.security.ssl.http.pemkey_filepath: certs/node2-key.pem
+plugins.security.ssl.http.pemtrustedcas_filepath: certs/root-ca.pem
+
+# TLS/SSL Configuration for Transport Layer (node-to-node)
+plugins.security.ssl.transport.enabled: true
+plugins.security.ssl.transport.pemcert_filepath: certs/node2.pem
+plugins.security.ssl.transport.pemkey_filepath: certs/node2-key.pem
+plugins.security.ssl.transport.pemtrustedcas_filepath: certs/root-ca.pem
+plugins.security.ssl.transport.enforce_hostname_verification: false
+
+# Admin certificate DN (for securityadmin)
+# NOTE: This DN is automatically updated by opensearch-setup based on CERT_* environment variables
+# Format: CN=<common-name>,O=<organization>,L=<locality>,ST=<state>,C=<country>
+plugins.security.authcz.admin_dn:
+  - 'CN=admin,O=OpenSearch,L=San Francisco,ST=CA,C=US'
+
+# Node certificates (for cluster communication)
+# NOTE: These DNs are automatically updated by opensearch-setup based on CERT_* environment variables
+plugins.security.nodes_dn:
+  - 'CN=opensearch-node1,O=OpenSearch,L=San Francisco,ST=CA,C=US'
+  - 'CN=opensearch-node2,O=OpenSearch,L=San Francisco,ST=CA,C=US'
+
+# Allow unsafe legacy renegotiation (for older clients if needed)
+plugins.security.ssl.http.enabled_protocols:
+  - "TLSv1.2"
+  - "TLSv1.3"
+
+plugins.security.ssl.transport.enabled_protocols:
+  - "TLSv1.2"
+  - "TLSv1.3"
+
+# k-NN Plugin Configuration for Vector Search
+# Note: k-NN plugin is enabled by default in OpenSearch 3.x
+# Most k-NN settings are configured at index creation time, not cluster level
+
+# Allow security to be visible in REST API
+plugins.security.allow_default_init_securityindex: true
+plugins.security.audit.type: internal_opensearch
+plugins.security.enable_snapshot_restore_privilege: true
+plugins.security.check_snapshot_restore_write_privileges: true
+plugins.security.restapi.roles_enabled: ["all_access", "security_rest_api_access"]
+
+# Disable Performance Analyzer to prevent config errors
+opensearch.experimental.feature.telemetry.enabled: false
+
+# Note: ML Commons plugin is enabled by default in OpenSearch 3.x
+# No configuration needed unless you want to disable specific features

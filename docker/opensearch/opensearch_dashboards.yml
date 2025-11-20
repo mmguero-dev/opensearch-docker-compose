@@ -1,0 +1,36 @@
+# OpenSearch Dashboards Configuration with SSL/TLS
+#
+# This configuration enables secure communication between Dashboards
+# and OpenSearch using custom certificates.
+
+# Server settings
+server.name: opensearch-dashboards
+server.host: "0.0.0.0"
+server.port: 5601
+
+# OpenSearch connection
+opensearch.hosts: ["https://opensearch-node1:9200", "https://opensearch-node2:9200"]
+opensearch.username: ${OPENSEARCH_USERNAME}
+opensearch.password: ${OPENSEARCH_PASSWORD}
+
+# SSL for OpenSearch connection
+# Use 'none' for self-signed certificates (development only)
+opensearch.ssl.verificationMode: none
+
+# Request timeout
+opensearch.requestTimeout: 60000
+
+# Security plugin settings
+opensearch_security.auth.type: "basicauth"
+opensearch_security.cookie.secure: false
+opensearch_security.cookie.ttl: 3600000
+
+# Disable security features that require additional configuration
+opensearch_security.multitenancy.enabled: false
+opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+
+# Logging
+logging.dest: stdout
+logging.silent: false
+logging.quiet: false
+logging.verbose: false
