@@ -4,118 +4,242 @@ services:
   opensearch-setup:
     image: opensearchproject/opensearch:${OPENSEARCH_VERSION:-latest}
     container_name: opensearch-setup
-    volumes:
-      - certs:/usr/share/opensearch/config/certs
-      - ./docker/opensearch:/tmp/opensearch-config:rw
     user: "0"
     environment:
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:?OPENSEARCH_INITIAL_ADMIN_PASSWORD must be set}
+      - OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME=${OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME:-kibanaserver}
+      - OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD=${OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD:?OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD must be set}
       - CERT_ORGANIZATION=${CERT_ORGANIZATION:-OpenSearch}
       - CERT_COUNTRY=${CERT_COUNTRY:-US}
       - CERT_STATE=${CERT_STATE:-CA}
       - CERT_LOCALITY=${CERT_LOCALITY:-San Francisco}
-    command: >
-      bash -c '
-        set -e;
-        echo "Setting up OpenSearch certificates...";
-        
-        # Check if certificates already exist
-        if [ -f config/certs/root-ca.pem ]; then
-          echo "Certificates already exist, skipping generation";
-          exit 0;
-        fi;
-        
-        # Install OpenSSL if not present
-        yum install -y openssl 2>/dev/null || apt-get update && apt-get install -y openssl || true;
-        
-        cd config/certs;
-        
-        # Generate Root CA
-        echo "Generating Root CA...";
-        openssl genrsa -out root-ca-key.pem 2048;
-        openssl req -new -x509 -sha256 -key root-ca-key.pem -out root-ca.pem -days 730 -subj "/C=${CERT_COUNTRY}/ST=${CERT_STATE}/L=${CERT_LOCALITY}/O=${CERT_ORGANIZATION}/CN=root-ca";
-        
-        # Generate Admin Certificate
-        echo "Generating Admin certificate...";
-        openssl genrsa -out admin-key-temp.pem 2048;
-        openssl pkcs8 -inform PEM -outform PEM -in admin-key-temp.pem -topk8 -nocrypt -v1 PBE-SHA1-3DES -out admin-key.pem;
-        openssl req -new -key admin-key.pem -out admin.csr -subj "/C=${CERT_COUNTRY}/ST=${CERT_STATE}/L=${CERT_LOCALITY}/O=${CERT_ORGANIZATION}/CN=admin";
-        openssl x509 -req -in admin.csr -CA root-ca.pem -CAkey root-ca-key.pem -CAcreateserial -sha256 -out admin.pem -days 730;
-        
-        # Generate Node1 Certificate
-        echo "Generating opensearch-node1 certificate...";
-        openssl genrsa -out node1-key-temp.pem 2048;
-        openssl pkcs8 -inform PEM -outform PEM -in node1-key-temp.pem -topk8 -nocrypt -v1 PBE-SHA1-3DES -out node1-key.pem;
-        openssl req -new -key node1-key.pem -out node1.csr -subj "/C=${CERT_COUNTRY}/ST=${CERT_STATE}/L=${CERT_LOCALITY}/O=${CERT_ORGANIZATION}/CN=opensearch-node1";
-        echo "subjectAltName=DNS:opensearch-node1,DNS:localhost,IP:127.0.0.1" > node1.ext;
-        openssl x509 -req -in node1.csr -CA root-ca.pem -CAkey root-ca-key.pem -CAcreateserial -sha256 -out node1.pem -days 730 -extfile node1.ext;
-        
-        # Generate Node2 Certificate
-        echo "Generating opensearch-node2 certificate...";
-        openssl genrsa -out node2-key-temp.pem 2048;
-        openssl pkcs8 -inform PEM -outform PEM -in node2-key-temp.pem -topk8 -nocrypt -v1 PBE-SHA1-3DES -out node2-key.pem;
-        openssl req -new -key node2-key.pem -out node2.csr -subj "/C=${CERT_COUNTRY}/ST=${CERT_STATE}/L=${CERT_LOCALITY}/O=${CERT_ORGANIZATION}/CN=opensearch-node2";
-        echo "subjectAltName=DNS:opensearch-node2,DNS:localhost,IP:127.0.0.1" > node2.ext;
-        openssl x509 -req -in node2.csr -CA root-ca.pem -CAkey root-ca-key.pem -CAcreateserial -sha256 -out node2.pem -days 730 -extfile node2.ext;
-        
-        # Generate Dashboards Certificate
-        echo "Generating dashboards certificate...";
-        openssl genrsa -out dashboards-key-temp.pem 2048;
-        openssl pkcs8 -inform PEM -outform PEM -in dashboards-key-temp.pem -topk8 -nocrypt -v1 PBE-SHA1-3DES -out dashboards-key.pem;
-        openssl req -new -key dashboards-key.pem -out dashboards.csr -subj "/C=${CERT_COUNTRY}/ST=${CERT_STATE}/L=${CERT_LOCALITY}/O=${CERT_ORGANIZATION}/CN=opensearch-dashboards";
-        echo "subjectAltName=DNS:opensearch-dashboards,DNS:localhost,IP:127.0.0.1" > dashboards.ext;
-        openssl x509 -req -in dashboards.csr -CA root-ca.pem -CAkey root-ca-key.pem -CAcreateserial -sha256 -out dashboards.pem -days 730 -extfile dashboards.ext;
-        
-        # Clean up temporary files
-        rm -f *.csr *.ext *-temp.pem;
-        
-        # Set permissions (strict for security plugin)
-        echo "Setting file permissions...";
-        chown -R 1000:1000 /usr/share/opensearch/config/certs;
-        chmod 700 /usr/share/opensearch/config/certs;
-        chmod 600 /usr/share/opensearch/config/certs/*;
-        
-        echo "Certificate generation complete!";
-        ls -la /usr/share/opensearch/config/certs/;
-        
-        # Update YAML config files with certificate DN values
-        echo "Updating OpenSearch config files with certificate DN values...";
-        
-        # Build DN strings from environment variables
-        ADMIN_DN="CN=admin,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}";
-        NODE1_DN="CN=opensearch-node1,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}";
-        NODE2_DN="CN=opensearch-node2,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}";
-        
-        # Update node1 config - replace the DN values between single quotes
-        sed -i "s|CN=admin,O=[^'\'']*|CN=admin,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}|g" /tmp/opensearch-config/opensearch-node1.yml;
-        sed -i "s|CN=opensearch-node1,O=[^'\'']*|CN=opensearch-node1,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}|g" /tmp/opensearch-config/opensearch-node1.yml;
-        sed -i "s|CN=opensearch-node2,O=[^'\'']*|CN=opensearch-node2,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}|g" /tmp/opensearch-config/opensearch-node1.yml;
-        
-        # Update node2 config - replace the DN values between single quotes
-        sed -i "s|CN=admin,O=[^'\'']*|CN=admin,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}|g" /tmp/opensearch-config/opensearch-node2.yml;
-        sed -i "s|CN=opensearch-node1,O=[^'\'']*|CN=opensearch-node1,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}|g" /tmp/opensearch-config/opensearch-node2.yml;
-        sed -i "s|CN=opensearch-node2,O=[^'\'']*|CN=opensearch-node2,O=${CERT_ORGANIZATION},L=${CERT_LOCALITY},ST=${CERT_STATE},C=${CERT_COUNTRY}|g" /tmp/opensearch-config/opensearch-node2.yml;
-        
-        echo "Config files updated successfully!";
-        echo "Admin DN: ${ADMIN_DN}";
-        echo "Node1 DN: ${NODE1_DN}";
-        echo "Node2 DN: ${NODE2_DN}";
-        
-        echo "Setup complete. Exiting...";
-      '
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f config/certs/root-ca.pem ]"]
-      interval: 2s
-      timeout: 5s
-      retries: 60
+    volumes:
+      - certs:/usr/share/opensearch/config/certs
+      - security-config:/generated-security
+      - ./docker/opensearch:/tmp/opensearch-config:rw
+    command:
+      - /bin/bash
+      - -c
+      - |
+          set -euo pipefail
+
+          install_openssl() {
+            if command -v openssl >/dev/null 2>&1; then
+              return
+            fi
+
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y openssl
+            elif command -v apt-get >/dev/null 2>&1; then
+              apt-get update
+              apt-get install -y openssl
+            else
+              echo "Unable to install openssl: no supported package manager found" >&2
+              exit 1
+            fi
+          }
+
+          install_openssl
+
+          echo "Setting up OpenSearch certificates..."
+
+          CERT_DIR=/usr/share/opensearch/config/certs
+          CERTS_COMPLETE=true
+          for file in \
+            root-ca.pem root-ca-key.pem \
+            admin.pem admin-key.pem \
+            node1.pem node1-key.pem \
+            node2.pem node2-key.pem \
+            dashboards.pem dashboards-key.pem; do
+            if [ ! -f "$${CERT_DIR}/$${file}" ]; then
+              CERTS_COMPLETE=false
+              break
+            fi
+          done
+
+          if [ "$${CERTS_COMPLETE}" = true ]; then
+            echo "Certificates already exist, skipping generation"
+          else
+            rm -f "$${CERT_DIR}"/*
+            cd "$${CERT_DIR}"
+
+            echo "Generating Root CA..."
+            openssl genrsa -out root-ca-key.pem 2048
+            openssl req -new -x509 -sha256 \
+              -key root-ca-key.pem \
+              -out root-ca.pem \
+              -days 730 \
+              -subj "/C=$${CERT_COUNTRY}/ST=$${CERT_STATE}/L=$${CERT_LOCALITY}/O=$${CERT_ORGANIZATION}/CN=root-ca"
+
+            echo "Generating Admin certificate..."
+            openssl genrsa -out admin-key-temp.pem 2048
+            openssl pkcs8 -inform PEM -outform PEM \
+              -in admin-key-temp.pem \
+              -topk8 -nocrypt -v1 PBE-SHA1-3DES \
+              -out admin-key.pem
+            openssl req -new \
+              -key admin-key.pem \
+              -out admin.csr \
+              -subj "/C=$${CERT_COUNTRY}/ST=$${CERT_STATE}/L=$${CERT_LOCALITY}/O=$${CERT_ORGANIZATION}/CN=admin"
+            openssl x509 -req \
+              -in admin.csr \
+              -CA root-ca.pem \
+              -CAkey root-ca-key.pem \
+              -CAcreateserial -sha256 \
+              -out admin.pem \
+              -days 730
+
+            echo "Generating opensearch-node1 certificate..."
+            openssl genrsa -out node1-key-temp.pem 2048
+            openssl pkcs8 -inform PEM -outform PEM \
+              -in node1-key-temp.pem \
+              -topk8 -nocrypt -v1 PBE-SHA1-3DES \
+              -out node1-key.pem
+            openssl req -new \
+              -key node1-key.pem \
+              -out node1.csr \
+              -subj "/C=$${CERT_COUNTRY}/ST=$${CERT_STATE}/L=$${CERT_LOCALITY}/O=$${CERT_ORGANIZATION}/CN=opensearch-node1"
+            echo "subjectAltName=DNS:opensearch-node1,DNS:localhost,IP:127.0.0.1" > node1.ext
+            openssl x509 -req \
+              -in node1.csr \
+              -CA root-ca.pem \
+              -CAkey root-ca-key.pem \
+              -CAcreateserial -sha256 \
+              -out node1.pem \
+              -days 730 \
+              -extfile node1.ext
+
+            echo "Generating opensearch-node2 certificate..."
+            openssl genrsa -out node2-key-temp.pem 2048
+            openssl pkcs8 -inform PEM -outform PEM \
+              -in node2-key-temp.pem \
+              -topk8 -nocrypt -v1 PBE-SHA1-3DES \
+              -out node2-key.pem
+            openssl req -new \
+              -key node2-key.pem \
+              -out node2.csr \
+              -subj "/C=$${CERT_COUNTRY}/ST=$${CERT_STATE}/L=$${CERT_LOCALITY}/O=$${CERT_ORGANIZATION}/CN=opensearch-node2"
+            echo "subjectAltName=DNS:opensearch-node2,DNS:localhost,IP:127.0.0.1" > node2.ext
+            openssl x509 -req \
+              -in node2.csr \
+              -CA root-ca.pem \
+              -CAkey root-ca-key.pem \
+              -CAcreateserial -sha256 \
+              -out node2.pem \
+              -days 730 \
+              -extfile node2.ext
+
+            echo "Generating dashboards certificate..."
+            openssl genrsa -out dashboards-key-temp.pem 2048
+            openssl pkcs8 -inform PEM -outform PEM \
+              -in dashboards-key-temp.pem \
+              -topk8 -nocrypt -v1 PBE-SHA1-3DES \
+              -out dashboards-key.pem
+            openssl req -new \
+              -key dashboards-key.pem \
+              -out dashboards.csr \
+              -subj "/C=$${CERT_COUNTRY}/ST=$${CERT_STATE}/L=$${CERT_LOCALITY}/O=$${CERT_ORGANIZATION}/CN=opensearch-dashboards"
+            echo "subjectAltName=DNS:opensearch-dashboards,DNS:localhost,IP:127.0.0.1" > dashboards.ext
+            openssl x509 -req \
+              -in dashboards.csr \
+              -CA root-ca.pem \
+              -CAkey root-ca-key.pem \
+              -CAcreateserial -sha256 \
+              -out dashboards.pem \
+              -days 730 \
+              -extfile dashboards.ext
+
+            rm -f *.csr *.ext *-temp.pem
+          fi
+
+          echo "Setting certificate file permissions..."
+          chown -R 1000:1000 "$${CERT_DIR}"
+          chmod 700 "$${CERT_DIR}"
+          chmod 600 "$${CERT_DIR}"/*
+
+          # Derive the actual certificate subjects rather than assuming the
+          # current CERT_* values match an already-existing certificate volume.
+          ADMIN_DN="$$(openssl x509 -in "$${CERT_DIR}/admin.pem" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
+          NODE1_DN="$$(openssl x509 -in "$${CERT_DIR}/node1.pem" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
+          NODE2_DN="$$(openssl x509 -in "$${CERT_DIR}/node2.pem" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
+
+          echo "Updating OpenSearch config files with certificate DN values..."
+          for config in \
+            /tmp/opensearch-config/opensearch-node1.yml \
+            /tmp/opensearch-config/opensearch-node2.yml; do
+            sed -i "s|CN=admin,O=[^'\"']*|$${ADMIN_DN}|g" "$${config}"
+            sed -i "s|CN=opensearch-node1,O=[^'\"']*|$${NODE1_DN}|g" "$${config}"
+            sed -i "s|CN=opensearch-node2,O=[^'\"']*|$${NODE2_DN}|g" "$${config}"
+          done
+
+          echo "Admin DN: $${ADMIN_DN}"
+          echo "Node1 DN: $${NODE1_DN}"
+          echo "Node2 DN: $${NODE2_DN}"
+
+          echo "Generating OpenSearch security configuration..."
+
+          if ! printf '%s' "$${OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME}" | grep -Eq '^[A-Za-z0-9._@-]+$$'; then
+            echo "OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME contains unsupported characters" >&2
+            exit 1
+          fi
+
+          if [ "$${OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME}" = admin ]; then
+            echo "OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME must not be 'admin'; use a separate Dashboards service account" >&2
+            exit 1
+          fi
+
+          rm -rf /generated-security/*
+          cp -a /usr/share/opensearch/config/opensearch-security/. /generated-security/
+
+          ADMIN_HASH="$$(
+            OPENSEARCH_JAVA_HOME=/usr/share/opensearch/jdk \
+              /usr/share/opensearch/plugins/opensearch-security/tools/hash.sh \
+              -p "$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}" | tail -n 1
+          )"
+
+          DASHBOARDS_HASH="$$(
+            OPENSEARCH_JAVA_HOME=/usr/share/opensearch/jdk \
+              /usr/share/opensearch/plugins/opensearch-security/tools/hash.sh \
+              -p "$${OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD}" | tail -n 1
+          )"
+
+          cat > /generated-security/internal_users.yml <<EOF_SECURITY_USERS
+          ---
+          _meta:
+            type: "internalusers"
+            config_version: 2
+
+          admin:
+            hash: "$${ADMIN_HASH}"
+            reserved: true
+            backend_roles:
+              - "admin"
+            description: "Admin user"
+
+          "$${OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME}":
+            hash: "$${DASHBOARDS_HASH}"
+            reserved: true
+            opendistro_security_roles:
+              - "kibana_server"
+            description: "OpenSearch Dashboards server user"
+          EOF_SECURITY_USERS
+
+          chown -R 1000:1000 /generated-security
+          chmod -R u=rwX,go= /generated-security
+
+          echo "Security configuration generated successfully"
+          echo "Setup complete. Exiting..."
     networks:
       - opensearch-network
 
   opensearch-node1:
     depends_on:
       opensearch-setup:
-        condition: service_healthy
+        condition: service_completed_successfully
     image: opensearchproject/opensearch:${OPENSEARCH_VERSION:-latest}
     container_name: opensearch-node1
+    user: "1000:1000"
     deploy:
       resources:
         limits:
@@ -125,11 +249,12 @@ services:
           cpus: ${OPENSEARCH_CPU_RESERVATION:-2.0}
           memory: ${OPENSEARCH_MEMORY_RESERVATION:-2G}
     environment:
-      # Core cluster settings (for opensearch.yml variable substitution)
       - OPENSEARCH_CLUSTER_NAME=${OPENSEARCH_CLUSTER_NAME:-opensearch-cluster}
       - OPENSEARCH_JAVA_OPTS=${OPENSEARCH_JAVA_OPTS:--Xms2g -Xmx2g}
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-admin}
-
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - logger.level=WARN
+      - bootstrap.memory_lock=true
+      - MAX_LOCKED_MEMORY=unlimited
     ulimits:
       memlock:
         soft: -1
@@ -137,24 +262,37 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    cap_add:
+      # IPC_LOCK - to lock memory, preventing swapping
+    - IPC_LOCK
+      # SYS_RESOURCE - for increasing memlock limits
+    - SYS_RESOURCE
     volumes:
       - certs:/usr/share/opensearch/config/certs:ro
+      - security-config:/usr/share/opensearch/config/opensearch-security:ro
       - ./docker/opensearch/opensearch-node1.yml:/usr/share/opensearch/config/opensearch.yml:ro
       - opensearch-data1:/usr/share/opensearch/data
     ports:
       - ${OPENSEARCH_PORT_1:-9200}:9200
       - ${OPENSEARCH_PORT_2:-9600}:9600
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9200'"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
     networks:
       - opensearch-network
 
   opensearch-node2:
     depends_on:
       opensearch-setup:
-        condition: service_healthy
+        condition: service_completed_successfully
       opensearch-node1:
         condition: service_started
     image: opensearchproject/opensearch:${OPENSEARCH_VERSION:-latest}
     container_name: opensearch-node2
+    user: "1000:1000"
     deploy:
       resources:
         limits:
@@ -164,12 +302,12 @@ services:
           cpus: ${OPENSEARCH_CPU_RESERVATION:-2.0}
           memory: ${OPENSEARCH_MEMORY_RESERVATION:-2G}
     environment:
-      # Core cluster settings (for opensearch.yml variable substitution)
       - OPENSEARCH_CLUSTER_NAME=${OPENSEARCH_CLUSTER_NAME:-opensearch-cluster}
       - OPENSEARCH_JAVA_OPTS=${OPENSEARCH_JAVA_OPTS:--Xms2g -Xmx2g}
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-admin}
-
-
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - logger.level=WARN
+      - bootstrap.memory_lock=true
+      - MAX_LOCKED_MEMORY=unlimited
     ulimits:
       memlock:
         soft: -1
@@ -177,23 +315,81 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    cap_add:
+      # IPC_LOCK - to lock memory, preventing swapping
+    - IPC_LOCK
+      # SYS_RESOURCE - for increasing memlock limits
+    - SYS_RESOURCE
     volumes:
       - certs:/usr/share/opensearch/config/certs:ro
+      - security-config:/usr/share/opensearch/config/opensearch-security:ro
       - ./docker/opensearch/opensearch-node2.yml:/usr/share/opensearch/config/opensearch.yml:ro
       - opensearch-data2:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9200'"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    networks:
+      - opensearch-network
+
+  opensearch-security-setup:
+    depends_on:
+      opensearch-setup:
+        condition: service_completed_successfully
+      opensearch-node1:
+        condition: service_healthy
+      opensearch-node2:
+        condition: service_healthy
+    image: opensearchproject/opensearch:${OPENSEARCH_VERSION:-latest}
+    container_name: opensearch-security-setup
+    user: "1000:1000"
+    environment:
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - OPENSEARCH_JAVA_HOME=/usr/share/opensearch/jdk
+    volumes:
+      - certs:/usr/share/opensearch/config/certs:ro
+      - security-config:/generated-security:ro
+    command:
+      - /bin/bash
+      - -c
+      - |
+          set -euo pipefail
+
+          SECURITYADMIN=/usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh
+
+          for attempt in $$(seq 1 60); do
+            echo "Applying generated internal users (attempt $${attempt}/60)..."
+            if "$${SECURITYADMIN}" \
+              -f /generated-security/internal_users.yml \
+              -t internalusers \
+              -h opensearch-node1 \
+              -p 9200 \
+              -icl \
+              -nhnv \
+              -cacert /usr/share/opensearch/config/certs/root-ca.pem \
+              -cert /usr/share/opensearch/config/certs/admin.pem \
+              -key /usr/share/opensearch/config/certs/admin-key.pem; then
+              echo "OpenSearch internal users applied successfully"
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "Failed to apply OpenSearch internal users" >&2
+          exit 1
     networks:
       - opensearch-network
 
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:${OPENSEARCH_DASHBOARDS_VERSION:-latest}
     container_name: opensearch-dashboards
+    user: "1000:1000"
     depends_on:
-      opensearch-setup:
-        condition: service_healthy
-      opensearch-node1:
-        condition: service_started
-      opensearch-node2:
-        condition: service_started
+      opensearch-security-setup:
+        condition: service_completed_successfully
     ports:
       - ${OPENSEARCH_DASHBOARDS_PORT:-5601}:5601
     expose:
@@ -202,14 +398,23 @@ services:
       - certs:/usr/share/opensearch-dashboards/config/certs:ro
       - ./docker/opensearch/opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml:ro
     environment:
-      OPENSEARCH_HOSTS: '["https://opensearch-node1:9200","https://opensearch-node2:9200"]'
-      OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-admin}
+      - 'OPENSEARCH_HOSTS=["https://opensearch-node1:9200","https://opensearch-node2:9200"]'
+      - OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME=${OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME:-kibanaserver}
+      - OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD=${OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD:?OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD must be set}
     networks:
       - opensearch-network
+    labels:
+      traefik.enable: false
+      # traefik.http.routers.opensearch.rule: Host(`opensearch.example.org`)
+      # traefik.http.routers.opensearch.entrypoints: websecure
+      # traefik.http.routers.opensearch.tls.certresolver: myresolver
+      # traefik.http.routers.opensearch.service: opensearch
+      # traefik.http.services.opensearch.loadbalancer.server.port: '5601'
 
 volumes:
   certs:
+    driver: local
+  security-config:
     driver: local
   opensearch-data1:
     driver: local
@@ -218,4 +423,5 @@ volumes:
 
 networks:
   opensearch-network:
-    driver: bridge
+    external: false
+    # name: traefik-proxy

@@ -10,8 +10,10 @@ server.port: 5601
 
 # OpenSearch connection
 opensearch.hosts: ["https://opensearch-node1:9200", "https://opensearch-node2:9200"]
-opensearch.username: ${OPENSEARCH_USERNAME}
-opensearch.password: ${OPENSEARCH_PASSWORD}
+opensearch.username: ${OPENSEARCH_DASHBOARDS_INTERNAL_USERNAME}
+opensearch.password: ${OPENSEARCH_DASHBOARDS_INTERNAL_PASSWORD}
+
+opensearch.requestHeadersAllowlist: ["authorization"]
 
 # SSL for OpenSearch connection
 # Use 'none' for self-signed certificates (development only)
